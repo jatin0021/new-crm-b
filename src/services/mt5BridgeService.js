@@ -5,8 +5,10 @@ export const connectMt5Bridge = async () => {
   try {
     const connection = new signalR.HubConnectionBuilder()
       .withUrl(env.MT5_BRIDGE_URL)
-      .withAutomaticReconnect()
-      .configureLogging(signalR.LogLevel.Warning)
+      .withAutomaticReconnect({
+        nextRetryDelayInMilliseconds: () => 30000 // Retry quietly every 30 seconds
+      })
+      .configureLogging(signalR.LogLevel.None) // Silence verbose internal SignalR transport logs
       .build();
 
     connection.on('ManagerAllClientsOverviewDelta', (delta) => {
@@ -21,17 +23,17 @@ export const connectMt5Bridge = async () => {
       console.log('🏁 SignalR Inbound Event: MT5 Position Closed', position);
     });
 
-    // Attempt start connection gracefully without blocking server startup if MT5 server is offline
+    // Attempt start connection gracefully without console spam
     connection.start().then(() => {
       console.log('🟢 Connected to MT5 SignalR Bridge Hub successfully.');
       connection.invoke('SubscribeAllClientsOverview').catch(() => {});
-    }).catch(err => {
-      console.warn(`⚠️ MT5 SignalR Bridge Hub connection offline (${err.message}). Bridge retry active.`);
+    }).catch(() => {
+      console.log(`ℹ️ MT5 SignalR Bridge standing by (Hub URL: ${env.MT5_BRIDGE_URL})`);
     });
 
     return connection;
   } catch (err) {
-    console.warn(`⚠️ MT5 SignalR Client Initialization warning: ${err.message}`);
+    console.log(`ℹ️ MT5 SignalR Bridge standing by (${err.message})`);
     return null;
   }
 };
