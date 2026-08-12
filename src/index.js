@@ -41,14 +41,20 @@ app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 // 2. Blueprint Standard Response Normalizer ({ ok, success, message, data, error })
 app.use(responseNormalizer);
 
-// 3. Static File Directories Setup
-const uploadDirs = ['uploads/branding', 'uploads/deposits', 'uploads/promotions', 'uploads/kyc'];
-uploadDirs.forEach(dir => {
-  const fullPath = path.join(process.cwd(), dir);
-  if (!fs.existsSync(fullPath)) {
-    fs.mkdirSync(fullPath, { recursive: true });
-  }
-});
+// 3. Static File Directories Setup (Skipped on Vercel serverless read-only environment)
+if (!process.env.VERCEL) {
+  const uploadDirs = ['uploads/branding', 'uploads/deposits', 'uploads/promotions', 'uploads/kyc'];
+  uploadDirs.forEach(dir => {
+    try {
+      const fullPath = path.join(process.cwd(), dir);
+      if (!fs.existsSync(fullPath)) {
+        fs.mkdirSync(fullPath, { recursive: true });
+      }
+    } catch (e) {
+      console.warn(`Directory setup skipped for ${dir}:`, e.message);
+    }
+  });
+}
 
 if (env.EXPOSE_UPLOADS_PUBLIC) {
   app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
