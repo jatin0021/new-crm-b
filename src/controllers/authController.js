@@ -96,23 +96,80 @@ export const loginUser = async (req, res) => {
     return res.status(400).json({ message: 'Email and password are required' });
   }
 
+  const cleanEmail = email.toLowerCase().trim();
+
   try {
     let user = null;
 
     if (checkPgStatus()) {
-      const result = await query(`SELECT * FROM users WHERE email = $1 AND is_active = TRUE`, [email.toLowerCase()]);
+      const result = await query(`SELECT * FROM users WHERE email = $1 AND is_active = TRUE`, [cleanEmail]);
       user = result.rows[0];
     } else {
-      user = inMemoryStore.users.find(u => u.email === email.toLowerCase() && u.is_active);
+      user = inMemoryStore.users.find(u => u.email === cleanEmail && u.is_active);
     }
 
     if (!user) {
-      return res.status(401).json({ message: 'Invalid credentials or inactive account' });
-    }
+      // User does not exist: Automatically create a new account
+      let firstName = 'Trader';
+      let lastName = 'Client';
+      if (cleanEmail.includes('@')) {
+        const usernamePart = cleanEmail.split('@')[0];
+        const parts = usernamePart.split(/[\._\-]/).filter(Boolean);
+        if (parts.length >= 2) {
+          firstName = parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
+          lastName = parts[1].charAt(0).toUpperCase() + parts[1].slice(1);
+        } else if (parts.length === 1) {
+          firstName = parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
+        }
+      }
 
-    const isValidPassword = await bcrypt.compare(password, user.password_hash);
-    if (!isValidPassword) {
-      return res.status(401).json({ message: 'Invalid email or password' });
+      const passwordHash = await bcrypt.hash(password, 10);
+      const assignedRefCode = `REF${Math.floor(1000 + Math.random() * 9000)}`;
+
+      if (checkPgStatus()) {
+        const insertRes = await query(
+          `INSERT INTO users (first_name, last_name, email, password_hash, country, phone, referral_code)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, first_name, last_name, email, country, phone, referral_code, kyc_status, is_active, created_at`,
+          [firstName, lastName, cleanEmail, passwordHash, 'United States', '', assignedRefCode]
+        );
+        user = insertRes.rows[0];
+
+        // Auto-create wallet
+        const walletNum = `W-${Math.floor(10000 + Math.random() * 90000)}`;
+        await query(
+          `INSERT INTO wallets (user_id, wallet_number, balance) VALUES ($1, $2, 0.00)`,
+          [user.id, walletNum]
+        );
+      } else {
+        user = {
+          id: inMemoryStore.users.length + 100,
+          first_name: firstName,
+          last_name: lastName,
+          email: cleanEmail,
+          password_hash: passwordHash,
+          country: 'United States',
+          phone: '',
+          referral_code: assignedRefCode,
+          kyc_status: 'unverified',
+          is_active: true,
+          created_at: new Date().toISOString()
+        };
+        inMemoryStore.users.push(user);
+
+        inMemoryStore.wallets.push({
+          id: inMemoryStore.wallets.length + 1,
+          user_id: user.id,
+          wallet_number: `W-${Math.floor(10000 + Math.random() * 90000)}`,
+          balance: 0.00,
+          currency: 'USD'
+        });
+      }
+    } else {
+      // User exists: verify password
+      const isValidPassword = await bcrypt.compare(password, user.password_hash);
+      if (!isValidPassword) {
+        return res.status(401).json({ message: 'Invalid password. Please check your credentials.' });
+      }
     }
 
     const token = jwt.sign(
