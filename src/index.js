@@ -60,7 +60,16 @@ if (env.EXPOSE_UPLOADS_PUBLIC) {
   app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 }
 
-// 4. Server Health Check Endpoint
+// 4. Server Root & Health Check Endpoints
+app.get('/', (req, res) => {
+  return res.json({
+    ok: true,
+    message: 'Succeed Capital CRM Backend Engine API Server is running',
+    health_check: '/api/health',
+    version: '1.0.0'
+  });
+});
+
 app.get('/api/health', (req, res) => {
   return res.json({
     message: 'Succeed Capital CRM Backend Engine is healthy',
