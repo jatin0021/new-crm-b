@@ -112,7 +112,10 @@ export const inMemoryStore = {
 
 // Initialize PostgreSQL Pool
 if (env.DATABASE_URL) {
-  pool = new Pool({ connectionString: env.DATABASE_URL });
+  pool = new Pool({ 
+    connectionString: env.DATABASE_URL,
+    ssl: { rejectUnauthorized: false }
+  });
 } else {
   pool = new Pool({
     host: env.DB_HOST,

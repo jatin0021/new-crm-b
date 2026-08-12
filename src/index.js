@@ -109,6 +109,11 @@ const startServer = async () => {
   });
 };
 
-startServer();
+// Only listen when running standalone process (not on Vercel serverless environment)
+if (!process.env.VERCEL) {
+  startServer();
+} else {
+  initDb().catch(err => console.warn('Serverless DB init warning:', err.message));
+}
 
 export default app;
