@@ -1,9 +1,16 @@
 import pkg from 'pg';
 const { Pool } = pkg;
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { env } from './env.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 let pool = null;
 let isPgConnected = false;
+let dbInitPromise = null;
 
 // In-Memory Data Fallback Store for Instant Out-of-the-Box Operation
 export const inMemoryStore = {
@@ -129,12 +136,39 @@ if (env.DATABASE_URL) {
   });
 }
 
-// Check Database Connection on startup
+// Attach error listener to prevent unhandled PG pool error crashes
+if (pool) {
+  pool.on('error', (err) => {
+    console.warn(`⚠️ Unexpected PostgreSQL Pool error: ${err.message}`);
+    isPgConnected = false;
+  });
+}
+
+// Check Database Connection & Auto-initialize Schema DDL on startup
 export const initDb = async () => {
+  if (process.env.VERCEL && !env.DATABASE_URL) {
+    console.log('ℹ️ Running on Vercel serverless without DATABASE_URL. PostgreSQL skipped; using dynamic in-memory store.');
+    isPgConnected = false;
+    return;
+  }
+
   try {
     const client = await pool.connect();
     isPgConnected = true;
     console.log('PostgreSQL Database Connected Successfully.');
+
+    // Auto-create database tables if not existing
+    try {
+      const schemaPath = path.join(__dirname, '../db/schema.sql');
+      if (fs.existsSync(schemaPath)) {
+        const sql = fs.readFileSync(schemaPath, 'utf8');
+        await client.query(sql);
+        console.log('✅ PostgreSQL Database Tables Schema Verified.');
+      }
+    } catch (schemaErr) {
+      console.warn(`⚠️ Schema initialization check warning: ${schemaErr.message}`);
+    }
+
     client.release();
   } catch (err) {
     isPgConnected = false;
@@ -142,7 +176,17 @@ export const initDb = async () => {
   }
 };
 
+export const ensureDbInitialized = async () => {
+  if (isPgConnected) return true;
+  if (!dbInitPromise) {
+    dbInitPromise = initDb();
+  }
+  await dbInitPromise;
+  return isPgConnected;
+};
+
 export const query = async (text, params) => {
+  await ensureDbInitialized();
   if (isPgConnected && pool) {
     return pool.query(text, params);
   }
@@ -153,4 +197,4 @@ export const query = async (text, params) => {
 
 export const checkPgStatus = () => isPgConnected;
 
-export default { query, initDb, checkPgStatus, inMemoryStore };
+export default { query, initDb, ensureDbInitialized, checkPgStatus, inMemoryStore };

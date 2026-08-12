@@ -38,6 +38,14 @@ app.use(cors({
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
+// URL Normalizer for Vercel Serverless Rewrites
+app.use((req, res, next) => {
+  if (!req.url.startsWith('/api') && !req.url.startsWith('/uploads') && req.url !== '/') {
+    req.url = '/api' + (req.url.startsWith('/') ? '' : '/') + req.url;
+  }
+  next();
+});
+
 // 2. Blueprint Standard Response Normalizer ({ ok, success, message, data, error })
 app.use(responseNormalizer);
 
@@ -97,7 +105,18 @@ app.use('/api/webhooks', webhookRoutes);
 // 6. Mount External CRM Interoperability API Gateway
 app.use('/api/v1/external', externalCrmRoutes);
 
-// 7. Global Catch-All Error Handler
+// 7. JSON 404 Handler for Unmatched API Endpoints
+app.use((req, res) => {
+  return res.status(404).json({
+    ok: false,
+    success: false,
+    message: `API endpoint ${req.method} ${req.url} not found`,
+    data: null,
+    error: 'NotFound'
+  });
+});
+
+// 8. Global Catch-All Error Handler
 app.use(errorHandler);
 
 // 8. Start Server, Sockets & Background Services
