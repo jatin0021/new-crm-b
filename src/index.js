@@ -57,7 +57,7 @@ if (env.EXPOSE_UPLOADS_PUBLIC) {
 // 4. Server Health Check Endpoint
 app.get('/api/health', (req, res) => {
   return res.json({
-    message: 'Succeed Capital CRM Backend Engine is healthy',
+    message: 'Vintage CRM Backend Engine is healthy',
     data: {
       status: 'online',
       version: '1.0.0',
@@ -99,7 +99,7 @@ const startServer = async () => {
   server.listen(env.PORT, () => {
     console.log(`
 ===================================================================
-🚀 SUCCEED CAPITAL CRM BACKEND ENGINE IS RUNNING!
+🚀 VINTAGE CRM BACKEND ENGINE IS RUNNING!
 🌐 Server Base URL:      http://localhost:${env.PORT}
 📊 Health Check:         http://localhost:${env.PORT}/api/health
 ⚡ Socket.IO Gateway:    ws://localhost:${env.PORT}

@@ -26,7 +26,7 @@ export const inMemoryStore = {
     {
       id: 1,
       name: 'Super Admin',
-      email: 'admin@succeedcapital.com',
+      email: 'admin@vintagecrm.com',
       password_hash: '$2a$10$98DjtE95HYl6syLy91pwpOQptPaxHkB68itYHaVutWZ4BnYi2B6S6', // 'password123'
       role: 'super_admin',
       is_active: true,
