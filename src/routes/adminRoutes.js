@@ -1,9 +1,13 @@
 import express from 'express';
-import { listAllUsers, impersonateUser, reviewDeposit, executeSafeDbQuery } from '../controllers/adminController.js';
+import { adminLogin, listAllUsers, impersonateUser, reviewDeposit, executeSafeDbQuery } from '../controllers/adminController.js';
 import { authenticateJWT, requireRole } from '../middleware/auth.js';
 
 const router = express.Router();
 
+// Public Admin Auth Route (No JWT required)
+router.post('/login', adminLogin);
+
+// Protected Admin Routes (JWT & Admin Role required)
 router.use(authenticateJWT);
 router.use(requireRole(['super_admin', 'desk_admin']));
 
