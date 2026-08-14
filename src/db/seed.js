@@ -12,7 +12,7 @@ export const seedDatabase = async () => {
       // Seed Super Admin if not exists
       await query(`
         INSERT INTO admin (name, email, password_hash, role)
-        VALUES ('Super Admin', 'admin@succeedcapital.com', $1, 'super_admin')
+        VALUES ('Super Admin', 'admin@vintagecrm.com', $1, 'super_admin')
         ON CONFLICT (email) DO NOTHING
       `, [adminPasswordHash]);
 
