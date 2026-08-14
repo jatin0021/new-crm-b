@@ -12,17 +12,25 @@ export const registerUser = async (req, res) => {
     });
   }
 
+  const normalizedEmail = email.trim().toLowerCase();
+
   try {
     const passwordHash = await bcrypt.hash(password, 10);
-    const assignedRefCode = referral_code || `REF${Math.floor(1000 + Math.random() * 9000)}`;
+    const assignedRefCode = referral_code ? referral_code.trim().toUpperCase() : `REF${Math.floor(1000 + Math.random() * 9000)}`;
 
     let newUser = null;
 
     if (checkPgStatus()) {
+      // Check existing email in Postgres
+      const existingUser = await query(`SELECT id FROM users WHERE LOWER(email) = $1`, [normalizedEmail]);
+      if (existingUser.rows && existingUser.rows.length > 0) {
+        return res.status(400).json({ message: 'User with this email already exists' });
+      }
+
       const result = await query(
         `INSERT INTO users (first_name, last_name, email, password_hash, country, phone, referral_code)
          VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, first_name, last_name, email, country, phone, referral_code, kyc_status, is_active, created_at`,
-        [first_name, last_name, email, passwordHash, country || 'United States', phone || '', assignedRefCode]
+        [first_name.trim(), last_name.trim(), normalizedEmail, passwordHash, country || 'United States', phone || '', assignedRefCode]
       );
       newUser = result.rows[0];
 
@@ -34,16 +42,16 @@ export const registerUser = async (req, res) => {
       );
     } else {
       // Check existing email in memory
-      const existing = inMemoryStore.users.find(u => u.email === email.toLowerCase());
+      const existing = inMemoryStore.users.find(u => u.email === normalizedEmail);
       if (existing) {
         return res.status(400).json({ message: 'User with this email already exists' });
       }
 
       newUser = {
         id: inMemoryStore.users.length + 100,
-        first_name,
-        last_name,
-        email: email.toLowerCase(),
+        first_name: first_name.trim(),
+        last_name: last_name.trim(),
+        email: normalizedEmail,
         password_hash: passwordHash,
         country: country || 'United States',
         phone: phone || '',
@@ -90,20 +98,40 @@ export const registerUser = async (req, res) => {
 };
 
 export const loginUser = async (req, res) => {
-  const { email, password } = req.body;
+  const { email, phone, identifier, password } = req.body;
+  const loginInput = (identifier || email || phone || '').trim();
 
-  if (!email || !password) {
-    return res.status(400).json({ message: 'Email and password are required' });
+  if (!loginInput || !password) {
+    return res.status(400).json({ message: 'Email or phone number and password are required' });
   }
 
   try {
     let user = null;
 
     if (checkPgStatus()) {
-      const result = await query(`SELECT * FROM users WHERE email = $1 AND is_active = TRUE`, [email.toLowerCase()]);
-      user = result.rows[0];
+      if (loginInput.includes('@')) {
+        const result = await query(`SELECT * FROM users WHERE LOWER(email) = $1 AND is_active = TRUE`, [loginInput.toLowerCase()]);
+        user = result.rows[0];
+      } else {
+        const cleanInput = loginInput.replace(/\D/g, '');
+        const result = await query(
+          `SELECT * FROM users WHERE (phone = $1 OR REGEXP_REPLACE(phone, '[^0-9]', '', 'g') = $2) AND is_active = TRUE`,
+          [loginInput, cleanInput]
+        );
+        user = result.rows[0];
+      }
     } else {
-      user = inMemoryStore.users.find(u => u.email === email.toLowerCase() && u.is_active);
+      const isEmail = loginInput.includes('@');
+      user = inMemoryStore.users.find(u => {
+        if (!u.is_active) return false;
+        if (isEmail) {
+          return u.email?.toLowerCase() === loginInput.toLowerCase();
+        } else {
+          const cleanInput = loginInput.replace(/\D/g, '');
+          const cleanUserPhone = (u.phone || '').replace(/\D/g, '');
+          return u.phone === loginInput || (cleanInput && cleanUserPhone && cleanInput === cleanUserPhone);
+        }
+      });
     }
 
     if (!user) {
@@ -112,7 +140,7 @@ export const loginUser = async (req, res) => {
 
     const isValidPassword = await bcrypt.compare(password, user.password_hash);
     if (!isValidPassword) {
-      return res.status(401).json({ message: 'Invalid email or password' });
+      return res.status(401).json({ message: 'Invalid email/phone or password' });
     }
 
     const token = jwt.sign(
@@ -130,6 +158,7 @@ export const loginUser = async (req, res) => {
           first_name: user.first_name,
           last_name: user.last_name,
           email: user.email,
+          phone: user.phone,
           country: user.country,
           referral_code: user.referral_code,
           kyc_status: user.kyc_status
@@ -165,4 +194,86 @@ export const getProfile = async (req, res) => {
     message: 'Profile retrieved successfully',
     data: { user, wallet }
   });
+};
+
+export const forgotPassword = async (req, res) => {
+  const { email } = req.body;
+
+  if (!email) {
+    return res.status(400).json({ message: 'Email address is required' });
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+
+  try {
+    let user = null;
+
+    if (checkPgStatus()) {
+      const result = await query(`SELECT id, email, first_name FROM users WHERE LOWER(email) = $1 AND is_active = TRUE`, [normalizedEmail]);
+      user = result.rows[0];
+    } else {
+      user = inMemoryStore.users.find(u => u.email === normalizedEmail && u.is_active);
+    }
+
+    if (!user) {
+      return res.status(404).json({ message: 'No registered account found with this email address' });
+    }
+
+    const resetToken = Math.floor(100000 + Math.random() * 900000).toString();
+
+    return res.json({
+      message: 'Password reset token generated successfully',
+      data: {
+        email: normalizedEmail,
+        resetToken,
+        instructions: 'Verification token generated. Enter new password to complete reset.'
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ message: 'Failed to process password reset request', error: err.message });
+  }
+};
+
+export const resetPassword = async (req, res) => {
+  const { email, new_password } = req.body;
+
+  if (!email || !new_password) {
+    return res.status(400).json({ message: 'Email address and new password are required' });
+  }
+
+  if (new_password.length < 6) {
+    return res.status(400).json({ message: 'Password must be at least 6 characters long' });
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+
+  try {
+    let user = null;
+
+    if (checkPgStatus()) {
+      const result = await query(`SELECT id FROM users WHERE LOWER(email) = $1 AND is_active = TRUE`, [normalizedEmail]);
+      user = result.rows[0];
+    } else {
+      user = inMemoryStore.users.find(u => u.email === normalizedEmail && u.is_active);
+    }
+
+    if (!user) {
+      return res.status(404).json({ message: 'User account not found' });
+    }
+
+    const newPasswordHash = await bcrypt.hash(new_password, 10);
+
+    if (checkPgStatus()) {
+      await query(`UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, [newPasswordHash, user.id]);
+    } else {
+      user.password_hash = newPasswordHash;
+    }
+
+    return res.json({
+      message: 'Password successfully updated! You can now sign in with your new password.',
+      data: { success: true }
+    });
+  } catch (err) {
+    return res.status(500).json({ message: 'Failed to reset password', error: err.message });
+  }
 };

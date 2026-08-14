@@ -1,9 +1,13 @@
 import express from 'express';
-import { listAllUsers, impersonateUser, reviewDeposit, executeSafeDbQuery } from '../controllers/adminController.js';
+import { adminLogin, listAllUsers, impersonateUser, reviewDeposit, executeSafeDbQuery } from '../controllers/adminController.js';
 import { authenticateJWT, requireRole } from '../middleware/auth.js';
 
 const router = express.Router();
 
+// Public unauthenticated login endpoint
+router.post('/login', adminLogin);
+
+// Protected admin endpoints requiring valid JWT Bearer token & role
 router.use(authenticateJWT);
 router.use(requireRole(['super_admin', 'desk_admin']));
 
