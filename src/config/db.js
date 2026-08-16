@@ -119,8 +119,10 @@ export const inMemoryStore = {
 
 // Initialize PostgreSQL Pool
 if (env.DATABASE_URL) {
+  // Strip conflicting sslmode parameter from connection string to allow ssl rejectUnauthorized: false setting in pg Pool
+  const cleanUrl = env.DATABASE_URL.replace(/[\?&]sslmode=[^&]*/g, '');
   pool = new Pool({ 
-    connectionString: env.DATABASE_URL,
+    connectionString: cleanUrl,
     ssl: { rejectUnauthorized: false }
   });
 } else {
@@ -167,6 +169,44 @@ export const initDb = async () => {
       }
     } catch (schemaErr) {
       console.warn(`⚠️ Schema initialization check warning: ${schemaErr.message}`);
+    }
+
+    // Auto-seed default Super Admin and Trader user if tables are empty
+    try {
+      const adminCountRes = await client.query('SELECT COUNT(*) FROM admin');
+      if (parseInt(adminCountRes.rows[0].count) === 0) {
+        await client.query(
+          `INSERT INTO admin (name, email, password_hash, role, is_active)
+           VALUES ($1, $2, $3, $4, $5)`,
+          ['Super Admin', 'admin@vintagecrm.com', '$2a$10$98DjtE95HYl6syLy91pwpOQptPaxHkB68itYHaVutWZ4BnYi2B6S6', 'super_admin', true]
+        );
+        console.log('✅ Default Super Admin seeded into Supabase PostgreSQL.');
+      }
+
+      const userCountRes = await client.query('SELECT COUNT(*) FROM users');
+      if (parseInt(userCountRes.rows[0].count) === 0) {
+        const userRes = await client.query(
+          `INSERT INTO users (first_name, last_name, email, password_hash, country, phone, referral_code, kyc_status, is_active)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+          ['John', 'Doe', 'trader@example.com', '$2a$10$98DjtE95HYl6syLy91pwpOQptPaxHkB68itYHaVutWZ4BnYi2B6S6', 'United States', '+15550199', 'REF1001', 'verified', true]
+        );
+        const userId = userRes.rows[0].id;
+        
+        await client.query(
+          `INSERT INTO wallets (user_id, wallet_number, balance, currency)
+           VALUES ($1, $2, 2500.00, 'USD') ON CONFLICT DO NOTHING`,
+          [userId, 'W-90182']
+        );
+
+        await client.query(
+          `INSERT INTO trading_accounts (user_id, login, account_type, group_type, leverage, balance, equity, free_margin, currency)
+           VALUES ($1, $2, 'live', 'Standard ECN', '1:500', 15400.50, 15890.20, 12400.00, 'USD') ON CONFLICT DO NOTHING`,
+          [userId, 501928]
+        );
+        console.log('✅ Default Trader user and wallet seeded into Supabase PostgreSQL.');
+      }
+    } catch (seedErr) {
+      console.warn(`⚠️ Seeding check warning: ${seedErr.message}`);
     }
 
     client.release();
