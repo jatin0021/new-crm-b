@@ -14,6 +14,10 @@ CREATE TABLE IF NOT EXISTS users (
   phone VARCHAR(50),
   referral_code VARCHAR(50),
   kyc_status VARCHAR(30) DEFAULT 'unverified', -- 'unverified', 'pending', 'verified', 'rejected'
+  email_verified BOOLEAN DEFAULT FALSE,
+  verification_token VARCHAR(255),
+  reset_password_token VARCHAR(255),
+  reset_password_expires TIMESTAMP WITH TIME ZONE,
   is_active BOOLEAN DEFAULT TRUE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP

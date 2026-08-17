@@ -9,6 +9,12 @@ export const seedDatabase = async () => {
 
   if (checkPgStatus()) {
     try {
+      // Ensure Schema Migrations for User Auth & Access Control
+      await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE;`);
+      await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token VARCHAR(255);`);
+      await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_password_token VARCHAR(255);`);
+      await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_password_expires TIMESTAMP WITH TIME ZONE;`);
+
       // Seed Super Admin if not exists
       await query(`
         INSERT INTO admin (name, email, password_hash, role)
@@ -18,8 +24,8 @@ export const seedDatabase = async () => {
 
       // Seed Default Trader User if not exists
       await query(`
-        INSERT INTO users (first_name, last_name, email, password_hash, country, phone, referral_code, kyc_status)
-        VALUES ('John', 'Doe', 'trader@example.com', $1, 'United States', '+15550199', 'REF1001', 'verified')
+        INSERT INTO users (first_name, last_name, email, password_hash, country, phone, referral_code, kyc_status, email_verified)
+        VALUES ('John', 'Doe', 'trader@example.com', $1, 'United States', '+15550199', 'REF1001', 'verified', TRUE)
         ON CONFLICT (email) DO NOTHING
       `, [defaultPasswordHash]);
 

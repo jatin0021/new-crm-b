@@ -18,6 +18,10 @@ export const inMemoryStore = {
       phone: '+15550199',
       referral_code: 'REF1001',
       kyc_status: 'verified',
+      email_verified: true,
+      verification_token: null,
+      reset_password_token: null,
+      reset_password_expires: null,
       is_active: true,
       created_at: new Date().toISOString()
     }
