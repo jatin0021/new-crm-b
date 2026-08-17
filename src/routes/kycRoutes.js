@@ -1,7 +1,7 @@
 import express from 'express';
 import multer from 'multer';
 import path from 'path';
-import { getKycStatus, uploadKycDocuments } from '../controllers/kycController.js';
+import { getKycStatus, uploadKycDocuments, getSumsubToken } from '../controllers/kycController.js';
 import { authenticateJWT } from '../middleware/auth.js';
 
 const storage = multer.diskStorage({
@@ -21,6 +21,7 @@ const router = express.Router();
 router.use(authenticateJWT);
 
 router.get('/status', getKycStatus);
+router.post('/sumsub-token', getSumsubToken);
 router.post('/upload', upload.fields([
   { name: 'id_document', maxCount: 1 },
   { name: 'proof_address', maxCount: 1 }
