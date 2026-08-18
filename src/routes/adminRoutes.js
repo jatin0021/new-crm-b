@@ -1,5 +1,14 @@
 import express from 'express';
-import { adminLogin, listAllUsers, impersonateUser, reviewDeposit, executeSafeDbQuery, deleteAllUsers } from '../controllers/adminController.js';
+import { 
+  adminLogin, 
+  listAllUsers, 
+  impersonateUser, 
+  reviewDeposit, 
+  executeSafeDbQuery, 
+  deleteAllUsers,
+  getAdminKycDocuments,
+  updateAdminKycStatus
+} from '../controllers/adminController.js';
 import { authenticateJWT, requireRole } from '../middleware/auth.js';
 
 const router = express.Router();
@@ -16,5 +25,10 @@ router.delete('/users', requireRole(['super_admin']), deleteAllUsers);
 router.post('/impersonate', impersonateUser);
 router.post('/deposits/review', reviewDeposit);
 router.post('/db-browser', requireRole(['super_admin']), executeSafeDbQuery);
+
+// Admin KYC verification desk endpoints
+router.get('/kyc', getAdminKycDocuments);
+router.patch('/kyc/:docId', updateAdminKycStatus);
+router.post('/kyc/review', updateAdminKycStatus);
 
 export default router;

@@ -214,3 +214,112 @@ export const deleteAllUsers = async (req, res) => {
     return res.status(500).json({ ok: false, success: false, message: 'Failed to wipe users', error: err.message });
   }
 };
+
+export const getAdminKycDocuments = async (req, res) => {
+  try {
+    let kycList = [];
+
+    if (checkPgStatus()) {
+      const result = await query(`
+        SELECT 
+          COALESCE(k.id, u.id) AS id,
+          u.id AS user_id,
+          u.first_name,
+          u.last_name,
+          u.email,
+          COALESCE(k.id_document_url, 'kyc_doc.jpg') AS id_document_url,
+          COALESCE(k.proof_address_url, 'kyc_doc.jpg') AS proof_address_url,
+          COALESCE(k.status, u.kyc_status, 'pending') AS status,
+          k.reviewer_notes,
+          COALESCE(k.reviewed_at, u.created_at) AS created_at
+        FROM users u
+        LEFT JOIN kyc_verification k ON u.id = k.user_id
+        WHERE u.kyc_status IN ('pending', 'verified', 'rejected') OR k.id IS NOT NULL
+        ORDER BY COALESCE(k.id, u.id) DESC
+      `);
+
+      kycList = result.rows.map(row => ({
+        id: row.id,
+        user_id: row.user_id,
+        first_name: row.first_name,
+        last_name: row.last_name,
+        email: row.email,
+        name: (row.first_name || row.last_name) ? `${row.first_name || ''} ${row.last_name || ''}`.trim() : row.email,
+        category: 'Proof of Identity',
+        id_type: 'National ID Card',
+        id_document_url: row.id_document_url,
+        proof_address_url: row.proof_address_url,
+        file_path: row.id_document_url || row.proof_address_url || 'kyc_doc.jpg',
+        status: (row.status || 'pending').toLowerCase(),
+        created_at: row.created_at || new Date().toISOString()
+      }));
+    } else {
+      const pendingUsers = (inMemoryStore.users || []).filter(u => u.kyc_status && u.kyc_status !== 'unverified');
+      kycList = pendingUsers.map((u, idx) => ({
+        id: idx + 1,
+        user_id: u.id,
+        first_name: u.first_name,
+        last_name: u.last_name,
+        email: u.email,
+        name: (u.first_name || u.last_name) ? `${u.first_name || ''} ${u.last_name || ''}`.trim() : u.email,
+        category: 'Proof of Identity',
+        id_type: 'National ID Card',
+        id_document_url: 'passport_scan.jpg',
+        proof_address_url: 'utility_bill.pdf',
+        file_path: 'passport_scan.jpg',
+        status: (u.kyc_status || 'pending').toLowerCase(),
+        created_at: u.created_at || new Date().toISOString()
+      }));
+    }
+
+    return res.json({
+      ok: true,
+      success: true,
+      data: {
+        manual_documents: kycList
+      }
+    });
+  } catch (err) {
+    console.error('Error fetching admin KYC documents:', err);
+    return res.status(500).json({ ok: false, success: false, message: 'Failed to fetch KYC documents', error: err.message });
+  }
+};
+
+export const updateAdminKycStatus = async (req, res) => {
+  const { docId } = req.params;
+  const { status, comment } = req.body;
+  const newStatus = (status || 'verified').toLowerCase();
+
+  try {
+    if (checkPgStatus()) {
+      let targetUserId = docId;
+      const kycCheck = await query(`SELECT user_id FROM kyc_verification WHERE id = $1`, [docId]);
+      if (kycCheck.rows && kycCheck.rows.length > 0) {
+        targetUserId = kycCheck.rows[0].user_id;
+      }
+
+      await query(
+        `UPDATE users SET kyc_status = $1 WHERE id = $2 OR email = $3`,
+        [newStatus, targetUserId, docId]
+      );
+
+      await query(
+        `UPDATE kyc_verification SET status = $1, reviewer_notes = $2, reviewed_at = CURRENT_TIMESTAMP WHERE user_id = $3 OR id = $4`,
+        [newStatus, comment || `Reviewed by admin`, targetUserId, docId]
+      );
+    } else {
+      const user = (inMemoryStore.users || []).find(u => String(u.id) === String(docId) || u.email === docId);
+      if (user) user.kyc_status = newStatus;
+    }
+
+    return res.json({
+      ok: true,
+      success: true,
+      message: `KYC document status updated to '${newStatus}'`
+    });
+  } catch (err) {
+    console.error('Error updating admin KYC status:', err);
+    return res.status(500).json({ ok: false, success: false, message: 'Failed to update KYC status', error: err.message });
+  }
+};
+
