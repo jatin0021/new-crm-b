@@ -36,6 +36,7 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-CRM-API-Key', 'X-CRM-API-Secret']
 }));
+app.options('*', cors());
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
@@ -79,7 +80,7 @@ app.get('/', (req, res) => {
   });
 });
 
-app.get('/api/health', (req, res) => {
+const healthHandler = (req, res) => {
   return res.json({
     message: 'Vintage CRM Backend Engine is healthy',
     data: {
@@ -89,23 +90,44 @@ app.get('/api/health', (req, res) => {
       external_crm_api_version: 'v1'
     }
   });
-});
+};
 
-// 5. Mount Core Application REST Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/user', userRoutes);
-app.use('/api/trading-accounts', accountRoutes);
-app.use('/api/financials', financialRoutes);
-app.use('/api/ib', ibRoutes);
-app.use('/api/kyc', kycRoutes);
-app.use('/api/leads', leadRoutes);
-app.use('/api/support', supportRoutes);
-app.use('/api/analysis', analysisRoutes);
-app.use('/api/admin', adminRoutes);
-app.use('/api/webhooks', webhookRoutes);
+app.get('/api/health', healthHandler);
+app.get('/health', healthHandler);
+
+// 5. Mount Core Application REST Routes (Dual-Mounted for Vercel Rewrites compatibility)
+const routesMap = [
+  ['/api/auth', authRoutes],
+  ['/auth', authRoutes],
+  ['/api/user', userRoutes],
+  ['/user', userRoutes],
+  ['/api/trading-accounts', accountRoutes],
+  ['/trading-accounts', accountRoutes],
+  ['/api/financials', financialRoutes],
+  ['/financials', financialRoutes],
+  ['/api/ib', ibRoutes],
+  ['/ib', ibRoutes],
+  ['/api/kyc', kycRoutes],
+  ['/kyc', kycRoutes],
+  ['/api/leads', leadRoutes],
+  ['/leads', leadRoutes],
+  ['/api/support', supportRoutes],
+  ['/support', supportRoutes],
+  ['/api/analysis', analysisRoutes],
+  ['/analysis', analysisRoutes],
+  ['/api/admin', adminRoutes],
+  ['/admin', adminRoutes],
+  ['/api/webhooks', webhookRoutes],
+  ['/webhooks', webhookRoutes]
+];
+
+routesMap.forEach(([path, routeHandler]) => {
+  app.use(path, routeHandler);
+});
 
 // 6. Mount External CRM Interoperability API Gateway
 app.use('/api/v1/external', externalCrmRoutes);
+app.use('/v1/external', externalCrmRoutes);
 
 // 7. JSON 404 Handler for Unmatched API Endpoints
 app.use((req, res) => {
