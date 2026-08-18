@@ -22,6 +22,7 @@ import leadRoutes from './routes/leadRoutes.js';
 import supportRoutes from './routes/supportRoutes.js';
 import analysisRoutes from './routes/analysisRoutes.js';
 import adminRoutes from './routes/adminRoutes.js';
+import userRoutes from './routes/userRoutes.js';
 import webhookRoutes from './routes/webhookRoutes.js';
 import externalCrmRoutes from './routes/externalCrmRoutes.js';
 
@@ -92,6 +93,7 @@ app.get('/api/health', (req, res) => {
 
 // 5. Mount Core Application REST Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/user', userRoutes);
 app.use('/api/trading-accounts', accountRoutes);
 app.use('/api/financials', financialRoutes);
 app.use('/api/ib', ibRoutes);

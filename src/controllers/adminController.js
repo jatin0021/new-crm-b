@@ -42,9 +42,9 @@ export const adminLogin = async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: admin.id, email: admin.email, role: admin.role || 'super_admin', name: admin.name },
+      { id: admin.id, email: admin.email, role: admin.role || 'super_admin', name: admin.name || 'Super Admin' },
       env.JWT_SECRET,
-      { expiresIn: '1d' }
+      { expiresIn: env.JWT_EXPIRES_IN || '24h' }
     );
 
     return res.json({
@@ -53,7 +53,7 @@ export const adminLogin = async (req, res) => {
         token,
         admin: {
           id: admin.id,
-          name: admin.name,
+          name: admin.name || 'Super Admin',
           email: admin.email,
           role: admin.role || 'super_admin'
         }
@@ -85,7 +85,7 @@ export const impersonateUser = async (req, res) => {
   try {
     let user = null;
     if (checkPgStatus()) {
-      const resVal = await query(`SELECT id, email, first_name, last_name FROM users WHERE id = $1`, [target_user_id]);
+      const resVal = await query(`SELECT id, first_name, last_name, email, country, phone, referral_code, kyc_status, email_verified FROM users WHERE id = $1`, [target_user_id]);
       user = resVal.rows[0];
     } else {
       user = inMemoryStore.users.find(u => u.id === parseInt(target_user_id));
@@ -95,18 +95,35 @@ export const impersonateUser = async (req, res) => {
       return res.status(404).json({ message: 'Target trader not found for impersonation' });
     }
 
-    // Generate short-lived impersonation token
+    // Generate short-lived impersonation token with admin reference
     const impersonationToken = jwt.sign(
-      { id: user.id, email: user.email, role: 'trader', impersonatedBy: req.user.id },
+      { 
+        id: user.id, 
+        email: user.email, 
+        role: 'trader', 
+        isImpersonating: true, 
+        impersonatedBy: req.user?.id || 1 
+      },
       env.JWT_SECRET,
-      { expiresIn: '1h' }
+      { expiresIn: '2h' }
     );
 
     return res.json({
       message: `Impersonation session established for trader: ${user.email}`,
       data: {
         token: impersonationToken,
-        user
+        user: {
+          id: user.id,
+          first_name: user.first_name,
+          last_name: user.last_name,
+          email: user.email,
+          country: user.country || 'United States',
+          phone: user.phone || '',
+          referral_code: user.referral_code,
+          kyc_status: user.kyc_status || 'unverified',
+          email_verified: user.email_verified ?? true,
+          isImpersonating: true
+        }
       }
     });
   } catch (err) {
@@ -180,5 +197,20 @@ export const executeSafeDbQuery = async (req, res) => {
     }
   } catch (err) {
     return res.status(400).json({ message: 'SQL Query execution failed', error: err.message });
+  }
+};
+
+export const deleteAllUsers = async (req, res) => {
+  try {
+    const { wipeAllUsers } = await import('../scripts/wipeUsers.js');
+    const result = await wipeAllUsers();
+    return res.json({
+      ok: true,
+      success: true,
+      message: 'All users and related data wiped successfully from database and memory store',
+      data: result
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, success: false, message: 'Failed to wipe users', error: err.message });
   }
 };

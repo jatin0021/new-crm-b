@@ -43,6 +43,18 @@ export const env = {
   JEXIPAY_SECRET_KEY: process.env.JEXIPAY_SECRET_KEY || 'jexipay_test_secret_key',
   SHUFTI_CLIENT_SECRET: process.env.SHUFTI_CLIENT_SECRET || 'shufti_test_secret_key',
   
+  // Cloudflare Turnstile Configuration
+  CF_TURNSTILE_SITE_KEY: process.env.CF_TURNSTILE_SITE_KEY || '1x00000000000000000000AA', // Cloudflare always passes test key
+  CF_TURNSTILE_SECRET_KEY: process.env.CF_TURNSTILE_SECRET_KEY || '1x0000000000000000000000000000000AA', // Cloudflare test secret
+
+  // Email SMTP Dispatcher Configuration
+  SMTP_HOST: process.env.SMTP_HOST || '',
+  SMTP_PORT: process.env.SMTP_PORT || 587,
+  SMTP_USER: process.env.SMTP_USER || '',
+  SMTP_PASS: process.env.SMTP_PASS || '',
+  SMTP_FROM: process.env.SMTP_FROM || 'Vintage CRM <no-reply@vintagecrm.com>',
+  CLIENT_BASE_URL: process.env.CLIENT_BASE_URL || 'http://localhost:5173',
+
   // MT5 SignalR Bridge Server URL
   MT5_BRIDGE_URL: process.env.MT5_BRIDGE_URL || 'http://localhost:8080/hubs/trading'
 };
