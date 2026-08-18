@@ -74,7 +74,7 @@ if (env.EXPOSE_UPLOADS_PUBLIC) {
 app.get('/', (req, res) => {
   return res.json({
     ok: true,
-    message: 'Succeed Capital CRM Backend Engine API Server is running',
+    message: 'Vintage CRM Backend Engine API Server is running',
     health_check: '/api/health',
     version: '1.0.0'
   });
