@@ -1,11 +1,55 @@
 import { query, checkPgStatus, inMemoryStore } from '../config/db.js';
-import crypto from 'crypto';
+import { encryptText, decryptText } from '../utils/crypto.js';
 
 /**
- * 1. List Trading Accounts with Live Margin & Risk Metrics
+ * Helper to normalize account object fields
+ */
+const normalizeAccount = (acc) => {
+  const bal = parseFloat(acc.balance || 0);
+  const eq = parseFloat(acc.equity || bal);
+  const freeMarg = parseFloat(acc.free_margin || eq);
+  const marginUsed = Math.max(0, eq - freeMarg);
+  const marginLevelPct = marginUsed > 0 ? parseFloat(((eq / marginUsed) * 100).toFixed(2)) : 9999.99;
+  const accountNumber = acc.account_number || String(acc.login || acc.id || '');
+  const isDemo = acc.is_demo === true || acc.account_type?.toLowerCase() === 'demo';
+
+  return {
+    id: acc.id,
+    user_id: acc.user_id,
+    account_number: accountNumber,
+    login: acc.login || parseInt(accountNumber, 10) || acc.id,
+    name: acc.name || `${acc.platform || 'MT5'} ${isDemo ? 'Demo' : 'Live'} Account`,
+    platform: acc.platform || 'MT5',
+    account_type: acc.account_type || (isDemo ? 'Demo' : 'Standard'),
+    currency: acc.currency || 'USD',
+    is_swap_free: !!acc.is_swap_free,
+    is_copy_account: !!acc.is_copy_account,
+    leverage: acc.leverage || '100',
+    reason_for_account: acc.reason_for_account || '',
+    account_status: acc.account_status || 'active',
+    is_demo: isDemo,
+    trading_server: acc.trading_server || (isDemo ? 'Vintage-Demo Server' : 'Vintage-Live Server'),
+    balance: bal,
+    equity: eq,
+    credit: parseFloat(acc.credit || 0),
+    free_margin: freeMarg,
+    margin: parseFloat(marginUsed.toFixed(2)),
+    margin_level_pct: marginLevelPct,
+    floating_pnl: parseFloat((eq - bal).toFixed(2)),
+    mt5_group: acc.mt5_group || acc.group_type || 'Standard',
+    custom_group_id: acc.custom_group_id || null,
+    created_at: acc.created_at,
+    updated_at: acc.updated_at
+  };
+};
+
+/**
+ * 1. GET /api/trading-accounts
+ * List Trading Accounts with Live Sync
  */
 export const listTradingAccounts = async (req, res) => {
   const userId = req.user.id;
+  const skipLiveSync = req.query.live === '0' || req.query.skipLive === 'true';
 
   try {
     let accounts = [];
@@ -16,181 +60,293 @@ export const listTradingAccounts = async (req, res) => {
       accounts = inMemoryStore.trading_accounts ? inMemoryStore.trading_accounts.filter(a => a.user_id === userId) : [];
     }
 
-    // Enrich with calculated Risk & Margin Metrics
-    const enrichedAccounts = accounts.map(acc => {
-      const bal = parseFloat(acc.balance || 0);
-      const eq = parseFloat(acc.equity || bal);
-      const freeMarg = parseFloat(acc.free_margin || eq);
-      const marginUsed = Math.max(0, eq - freeMarg);
-      const marginLevelPct = marginUsed > 0 ? parseFloat(((eq / marginUsed) * 100).toFixed(2)) : 9999.99;
-      const floatingPnl = parseFloat((eq - bal).toFixed(2));
-
-      return {
-        ...acc,
-        balance: bal,
-        equity: eq,
-        free_margin: freeMarg,
-        margin_used: parseFloat(marginUsed.toFixed(2)),
-        margin_level_pct: marginLevelPct,
-        floating_pnl: floatingPnl,
-        server: acc.account_type === 'demo' ? 'VintageDemo-Server 1' : 'VintageLive-Server 1'
-      };
-    });
+    const normalized = accounts.map(acc => normalizeAccount(acc));
 
     return res.json({
-      message: 'Trading accounts & risk metrics retrieved',
-      data: { accounts: enrichedAccounts }
+      ok: true,
+      success: true,
+      message: 'Trading accounts retrieved successfully',
+      data: { accounts: normalized }
     });
   } catch (err) {
-    return res.status(500).json({ message: 'Failed to retrieve trading accounts', error: err.message });
+    return res.status(500).json({ ok: false, success: false, message: 'Failed to retrieve trading accounts', error: err.message });
   }
 };
 
 /**
- * 2. Create Live or Demo Trading Account (with Platform, Group, Leverage Matrix, Currency, Balance)
+ * 2. GET /api/trading-accounts/available-groups
+ * Available Account Groups based on type (demo vs real)
+ */
+export const getAvailableGroups = async (req, res) => {
+  const type = (req.query.type || 'real').toLowerCase();
+
+  try {
+    if (type === 'demo') {
+      return res.json({
+        ok: true,
+        success: true,
+        data: {
+          groups: [
+            { id: 'demo_standard', name: 'Standard Demo', group_name: 'demo\\standard', leverage_options: ['50', '100', '200', '500'], currency: 'USD' }
+          ]
+        }
+      });
+    }
+
+    return res.json({
+      ok: true,
+      success: true,
+      data: {
+        groups: [
+          { id: 'real_standard', name: 'Standard ECN', group_name: 'real\\standard_ecn', leverage_options: ['50', '100', '200', '500'], currency: 'USD', min_deposit: 100 },
+          { id: 'real_pro', name: 'Pro Zero Spread', group_name: 'real\\pro_zero', leverage_options: ['50', '100', '200', '500'], currency: 'USD', min_deposit: 500 },
+          { id: 'real_vip', name: 'VIP Institutional', group_name: 'real\\vip_inst', leverage_options: ['50', '100', '200'], currency: 'USD', min_deposit: 5000 }
+        ]
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, success: false, message: 'Failed to fetch available account groups', error: err.message });
+  }
+};
+
+/**
+ * 3. POST /api/trading-accounts
+ * Create Live or Demo Trading Account
  */
 export const createTradingAccount = async (req, res) => {
   const userId = req.user.id;
-  const { account_type, group_type, leverage, currency, initial_demo_balance, platform } = req.body;
+  const { name, leverage, password, group, isDemo, is_demo, demoTopUp, platform, currency, account_type } = req.body;
 
-  const type = account_type === 'demo' ? 'demo' : 'live';
-  const group = group_type || 'Standard ECN';
-  const lev = leverage || '1:500';
-  const curr = currency || 'USD';
-  const plat = platform || 'MetaTrader 5';
+  const accTypeLower = String(account_type || '').toLowerCase();
+  const isDemoAccount = isDemo === true || is_demo === true || isDemo === 'true' || is_demo === 'true' || accTypeLower === 'demo';
+  const accName = name || (isDemoAccount ? 'Demo Trading Account' : 'Main Live Account');
+  const accLeverage = String(leverage || '100');
+  const rawPassword = password || `Mst#${Math.floor(100000 + Math.random() * 800000)}`;
 
-  const loginNumber = Math.floor(500000 + Math.random() * 400000);
-  const masterPass = `Mst#${Math.floor(100000 + Math.random() * 800000)}`;
-  const investorPass = `Inv#${Math.floor(100000 + Math.random() * 800000)}`;
-  const initialBalance = type === 'demo' ? parseFloat(initial_demo_balance || 10000.00) : 0.00;
+  if (!isDemoAccount && rawPassword.length < 8) {
+    return res.status(400).json({ ok: false, success: false, message: 'Password must be at least 8 characters long' });
+  }
+
+  const rawInvestorPass = `Inv#${Math.floor(100000 + Math.random() * 800000)}`;
+  const encryptedMaster = encryptText(rawPassword);
+  const encryptedInvestor = encryptText(rawInvestorPass);
+
+  const accountNumber = String(Math.floor(100000 + Math.random() * 900000));
+  const loginNum = parseInt(accountNumber, 10);
+  const initialBalance = isDemoAccount ? parseFloat(demoTopUp || req.body.initial_demo_balance || 10000.00) : 0.00;
+  const accPlatform = platform || 'MT5';
+  const accCurrency = currency || 'USD';
+  const accGroup = group || (isDemoAccount ? 'demo\\standard' : 'real\\standard_ecn');
+  const accTypeStr = isDemoAccount ? 'Demo' : (account_type || 'Standard');
+  const tradingServer = isDemoAccount ? 'Vintage-Demo Server' : 'Vintage-Live Server';
 
   try {
-    let newAccount = null;
+    let createdRow = null;
 
     if (checkPgStatus()) {
       const result = await query(
-        `INSERT INTO trading_accounts (user_id, login, account_type, group_type, leverage, master_password, investor_password, balance, equity, free_margin, currency)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $8, $9) RETURNING *`,
-        [userId, loginNumber, type, group, lev, masterPass, investorPass, initialBalance, curr]
+        `INSERT INTO trading_accounts 
+         (user_id, account_number, login, platform, account_type, currency, leverage, is_demo, trading_server, master_password, investor_password, name, balance, equity, free_margin, mt5_group, account_status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'active')
+         RETURNING *`,
+        [userId, accountNumber, loginNum, accPlatform, accTypeStr, accCurrency, accLeverage, isDemoAccount, tradingServer, encryptedMaster, encryptedInvestor, accName, initialBalance, initialBalance, initialBalance, accGroup]
       );
-      newAccount = result.rows[0];
+      createdRow = result.rows[0];
     } else {
-      newAccount = {
-        id: inMemoryStore.trading_accounts.length + 100,
+      createdRow = {
+        id: (inMemoryStore.trading_accounts?.length || 0) + 100,
         user_id: userId,
-        login: loginNumber,
-        account_type: type,
-        group_type: group,
-        leverage: lev,
-        master_password: masterPass,
-        investor_password: investorPass,
+        account_number: accountNumber,
+        login: loginNum,
+        platform: accPlatform,
+        account_type: accTypeStr,
+        currency: accCurrency,
+        leverage: accLeverage,
+        is_demo: isDemoAccount,
+        trading_server: tradingServer,
+        master_password: encryptedMaster,
+        investor_password: encryptedInvestor,
+        name: accName,
         balance: initialBalance,
         equity: initialBalance,
         free_margin: initialBalance,
-        currency: curr,
-        platform: plat,
+        mt5_group: accGroup,
+        account_status: 'active',
         created_at: new Date().toISOString()
       };
-      inMemoryStore.trading_accounts.push(newAccount);
+      if (!inMemoryStore.trading_accounts) inMemoryStore.trading_accounts = [];
+      inMemoryStore.trading_accounts.push(createdRow);
     }
 
+    const normalized = normalizeAccount(createdRow);
+
     return res.status(201).json({
-      message: `${plat} ${type.toUpperCase()} trading account created successfully`,
-      data: { account: newAccount }
+      ok: true,
+      success: true,
+      message: `${isDemoAccount ? 'Demo' : 'Live'} trading account created successfully`,
+      data: { account: normalized }
     });
   } catch (err) {
-    return res.status(500).json({ message: 'Failed to provision trading account', error: err.message });
+    return res.status(500).json({ ok: false, success: false, message: 'Failed to provision trading account', error: err.message });
   }
 };
 
 /**
- * 3. Change Account Master or Investor Password
+ * 4. POST /api/trading-accounts/demo-topup
+ * Instant balance top-up for Demo Accounts (max 10,000,000)
+ */
+export const demoTopUp = async (req, res) => {
+  const userId = req.user.id;
+  const { account_number, login, amount } = req.body;
+  const accNum = String(account_number || login || '');
+  const topUpAmount = parseFloat(amount);
+
+  if (!accNum) {
+    return res.status(400).json({ ok: false, success: false, message: 'Account number is required' });
+  }
+  if (isNaN(topUpAmount) || topUpAmount <= 0 || topUpAmount > 10000000) {
+    return res.status(400).json({ ok: false, success: false, message: 'Top-up amount must be between $1 and $10,000,000' });
+  }
+
+  try {
+    let targetAcc = null;
+
+    if (checkPgStatus()) {
+      const checkRes = await query(
+        `SELECT * FROM trading_accounts WHERE (account_number = $1 OR login = $2) AND user_id = $3`,
+        [accNum, parseInt(accNum, 10) || 0, userId]
+      );
+      targetAcc = checkRes.rows[0];
+    } else {
+      targetAcc = inMemoryStore.trading_accounts?.find(a => (a.account_number === accNum || a.login === parseInt(accNum, 10)) && a.user_id === userId);
+    }
+
+    if (!targetAcc) {
+      return res.status(404).json({ ok: false, success: false, message: 'Trading account not found or access denied' });
+    }
+
+    const isDemo = targetAcc.is_demo === true || targetAcc.account_type?.toLowerCase() === 'demo';
+    if (!isDemo) {
+      return res.status(400).json({ ok: false, success: false, message: 'Top-up is strictly restricted to Demo trading accounts.' });
+    }
+
+    const newBalance = parseFloat(targetAcc.balance || 0) + topUpAmount;
+    const newEquity = parseFloat(targetAcc.equity || targetAcc.balance || 0) + topUpAmount;
+    const newFreeMargin = parseFloat(targetAcc.free_margin || targetAcc.balance || 0) + topUpAmount;
+
+    if (checkPgStatus()) {
+      await query(
+        `UPDATE trading_accounts SET balance = $1, equity = $2, free_margin = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4`,
+        [newBalance, newEquity, newFreeMargin, targetAcc.id]
+      );
+    } else {
+      targetAcc.balance = newBalance;
+      targetAcc.equity = newEquity;
+      targetAcc.free_margin = newFreeMargin;
+    }
+
+    return res.json({
+      ok: true,
+      success: true,
+      message: `Successfully topped up Demo Account #${accNum} by $${topUpAmount.toLocaleString()}`,
+      data: {
+        account_number: accNum,
+        topup_amount: topUpAmount,
+        new_balance: newBalance
+      }
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, success: false, message: 'Demo top-up failed', error: err.message });
+  }
+};
+
+/**
+ * 5. POST /api/trading-accounts/change-password
+ * Change Master or Investor Password for Trading Account
  */
 export const changeTradingPassword = async (req, res) => {
   const userId = req.user.id;
-  const { login, password_type, new_password } = req.body; // password_type: 'master' | 'investor'
+  const { account_number, login, new_password, password_type } = req.body;
+  const accNum = String(account_number || login || '');
 
-  if (!login || !new_password) {
-    return res.status(400).json({ message: 'Account login number and new password are required' });
+  if (!accNum || !new_password) {
+    return res.status(400).json({ ok: false, success: false, message: 'Account number and new password are required' });
+  }
+  if (new_password.length < 8) {
+    return res.status(400).json({ ok: false, success: false, message: 'New password must be at least 8 characters long' });
   }
 
   const isInvestor = password_type === 'investor';
+  const encrypted = encryptText(new_password);
   const column = isInvestor ? 'investor_password' : 'master_password';
 
   try {
+    let targetAcc = null;
+
     if (checkPgStatus()) {
-      await query(`UPDATE trading_accounts SET ${column} = $1 WHERE login = $2 AND user_id = $3`, [new_password, login, userId]);
+      const checkRes = await query(
+        `SELECT * FROM trading_accounts WHERE (account_number = $1 OR login = $2) AND user_id = $3`,
+        [accNum, parseInt(accNum, 10) || 0, userId]
+      );
+      targetAcc = checkRes.rows[0];
     } else {
-      const acc = inMemoryStore.trading_accounts.find(a => a.login === parseInt(login) && a.user_id === userId);
-      if (acc) {
-        if (isInvestor) acc.investor_password = new_password;
-        else acc.master_password = new_password;
-      }
+      targetAcc = inMemoryStore.trading_accounts?.find(a => (a.account_number === accNum || a.login === parseInt(accNum, 10)) && a.user_id === userId);
+    }
+
+    if (!targetAcc) {
+      return res.status(404).json({ ok: false, success: false, message: 'Trading account not found or access denied' });
+    }
+
+    if (checkPgStatus()) {
+      await query(`UPDATE trading_accounts SET ${column} = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, [encrypted, targetAcc.id]);
+    } else {
+      targetAcc[column] = encrypted;
     }
 
     return res.json({
-      message: `${isInvestor ? 'Investor (Read-Only)' : 'Master Trading'} password for account #${login} updated successfully`,
-      data: { login, password_type: isInvestor ? 'investor' : 'master' }
+      ok: true,
+      success: true,
+      message: `${isInvestor ? 'Investor' : 'Master'} password for account #${accNum} updated successfully`,
+      data: { account_number: accNum, password_type: isInvestor ? 'investor' : 'master' }
     });
   } catch (err) {
-    return res.status(500).json({ message: 'Password update failed', error: err.message });
+    return res.status(500).json({ ok: false, success: false, message: 'Password update failed', error: err.message });
   }
 };
 
 /**
- * 4. Single Sign-On (SSO) WebTrader Launch Token
- */
-export const getSsoToken = async (req, res) => {
-  const userId = req.user.id;
-  const { login } = req.body;
-
-  try {
-    const ssoToken = `sso_wt_${crypto.randomBytes(24).toString('hex')}`;
-    const webtraderUrl = `https://webtrader.vintagecrm.com/terminal?login=${login || 501928}&token=${ssoToken}`;
-
-    return res.json({
-      message: 'Single Sign-On (SSO) WebTrader token generated',
-      data: {
-        sso_token: ssoToken,
-        webtrader_url: webtraderUrl,
-        server: 'VintageLive-Server 1'
-      }
-    });
-  } catch (err) {
-    return res.status(500).json({ message: 'SSO launch failed', error: err.message });
-  }
-};
-
-/**
- * 5. Update Account Leverage
+ * 6. POST /api/trading-accounts/leverage
  */
 export const updateLeverage = async (req, res) => {
   const userId = req.user.id;
-  const { login, leverage } = req.body;
+  const { account_number, login, leverage } = req.body;
+  const accNum = String(account_number || login || '');
 
-  if (!login || !leverage) {
-    return res.status(400).json({ message: 'Login number and leverage value are required' });
+  if (!accNum || !leverage) {
+    return res.status(400).json({ ok: false, success: false, message: 'Account number and leverage value are required' });
   }
 
   try {
     if (checkPgStatus()) {
-      await query(`UPDATE trading_accounts SET leverage = $1 WHERE login = $2 AND user_id = $3`, [leverage, login, userId]);
+      await query(`UPDATE trading_accounts SET leverage = $1 WHERE (account_number = $2 OR login = $3) AND user_id = $4`, [leverage, accNum, parseInt(accNum, 10) || 0, userId]);
     } else {
-      const acc = inMemoryStore.trading_accounts.find(a => a.login === parseInt(login) && a.user_id === userId);
+      const acc = inMemoryStore.trading_accounts?.find(a => (a.account_number === accNum || a.login === parseInt(accNum, 10)) && a.user_id === userId);
       if (acc) acc.leverage = leverage;
     }
 
     return res.json({
-      message: `Leverage updated to ${leverage} for account #${login}`,
-      data: { login, leverage }
+      ok: true,
+      success: true,
+      message: `Leverage updated to 1:${leverage} for account #${accNum}`,
+      data: { account_number: accNum, leverage }
     });
   } catch (err) {
-    return res.status(500).json({ message: 'Leverage update failed', error: err.message });
+    return res.status(500).json({ ok: false, success: false, message: 'Leverage update failed', error: err.message });
   }
 };
 
 /**
- * 6. Internal Funds Transfer (Wallet <-> MT5 Account)
+ * 7. POST /api/trading-accounts/transfer
  */
 export const internalTransfer = async (req, res) => {
   const userId = req.user.id;
@@ -198,21 +354,21 @@ export const internalTransfer = async (req, res) => {
 
   const transferAmount = parseFloat(amount);
   if (!transferAmount || transferAmount <= 0) {
-    return res.status(400).json({ message: 'Invalid transfer amount' });
+    return res.status(400).json({ ok: false, success: false, message: 'Invalid transfer amount' });
   }
 
   try {
     if (checkPgStatus()) {
       if (from_type === 'wallet') {
         await query(`UPDATE wallets SET balance = balance - $1 WHERE user_id = $2`, [transferAmount, userId]);
-        await query(`UPDATE trading_accounts SET balance = balance + $1, equity = equity + $1, free_margin = free_margin + $1 WHERE login = $2 AND user_id = $3`, [transferAmount, to_login, userId]);
+        await query(`UPDATE trading_accounts SET balance = balance + $1, equity = equity + $1, free_margin = free_margin + $1 WHERE (account_number = $2 OR login = $3) AND user_id = $4`, [transferAmount, String(to_login), parseInt(to_login, 10) || 0, userId]);
       } else {
-        await query(`UPDATE trading_accounts SET balance = balance - $1, equity = equity - $1, free_margin = free_margin - $1 WHERE login = $2 AND user_id = $3`, [transferAmount, to_login, userId]);
+        await query(`UPDATE trading_accounts SET balance = balance - $1, equity = equity - $1, free_margin = free_margin - $1 WHERE (account_number = $2 OR login = $3) AND user_id = $4`, [transferAmount, String(to_login), parseInt(to_login, 10) || 0, userId]);
         await query(`UPDATE wallets SET balance = balance + $1 WHERE user_id = $2`, [transferAmount, userId]);
       }
     } else {
-      const wallet = inMemoryStore.wallets ? inMemoryStore.wallets.find(w => w.user_id === userId) : null;
-      const acc = inMemoryStore.trading_accounts.find(a => a.login === parseInt(to_login) && a.user_id === userId);
+      const wallet = inMemoryStore.wallets?.find(w => w.user_id === userId);
+      const acc = inMemoryStore.trading_accounts?.find(a => (a.account_number === String(to_login) || a.login === parseInt(to_login, 10)) && a.user_id === userId);
       if (wallet && acc) {
         if (from_type === 'wallet') {
           wallet.balance -= transferAmount;
@@ -229,94 +385,65 @@ export const internalTransfer = async (req, res) => {
     }
 
     return res.json({
+      ok: true,
+      success: true,
       message: `Internal transfer of $${transferAmount.toFixed(2)} completed successfully`,
       data: { from_type, to_login, amount: transferAmount }
     });
   } catch (err) {
-    return res.status(500).json({ message: 'Internal transfer failed', error: err.message });
+    return res.status(500).json({ ok: false, success: false, message: 'Internal transfer failed', error: err.message });
   }
 };
 
 /**
- * 7. Trade Performance Ledger & Closed Trades History Table
+ * 8. GET /api/trading-accounts/sso-token
  */
-export const getTradePerformance = async (req, res) => {
+export const getSsoToken = async (req, res) => {
   const userId = req.user.id;
+  const { login, account_number } = req.query || req.body || {};
 
   try {
-    let trades = [];
-    if (checkPgStatus()) {
-      const result = await query(`SELECT * FROM mt5_trade_history ORDER BY close_time DESC`);
-      trades = result.rows;
-    } else {
-      trades = inMemoryStore.mt5_trade_history || [];
-    }
-
-    const totalTrades = trades.length;
-    const winningTrades = trades.filter(t => parseFloat(t.profit) > 0);
-    const losingTrades = trades.filter(t => parseFloat(t.profit) < 0);
-
-    const winRate = totalTrades > 0 ? ((winningTrades.length / totalTrades) * 100).toFixed(1) : 0;
-    const lossRate = totalTrades > 0 ? ((losingTrades.length / totalTrades) * 100).toFixed(1) : 0;
-
-    const totalWinProfit = winningTrades.reduce((acc, t) => acc + parseFloat(t.profit), 0);
-    const totalLossProfit = Math.abs(losingTrades.reduce((acc, t) => acc + parseFloat(t.profit), 0));
-
-    const netProfit = totalWinProfit - totalLossProfit;
-    const profitFactor = totalLossProfit > 0 ? (totalWinProfit / totalLossProfit).toFixed(2) : (totalWinProfit > 0 ? '99.9' : '1.0');
-    const totalVolume = trades.reduce((acc, t) => acc + parseFloat(t.volume_lots), 0);
+    const ssoToken = `sso_wt_${Math.random().toString(36).substring(2)}${Date.now()}`;
+    const webtraderUrl = `https://webtrader.vintagecrm.com/terminal?login=${login || account_number || 501928}&token=${ssoToken}`;
 
     return res.json({
-      message: 'Trade performance ledger computed',
+      ok: true,
+      success: true,
+      message: 'Single Sign-On (SSO) WebTrader token generated',
       data: {
-        metrics: {
-          total_trades: totalTrades,
-          win_rate_pct: parseFloat(winRate),
-          loss_rate_pct: parseFloat(lossRate),
-          net_profit: parseFloat(netProfit.toFixed(2)),
-          profit_factor: parseFloat(profitFactor),
-          total_lots: parseFloat(totalVolume.toFixed(2)),
-          avg_win: winningTrades.length > 0 ? parseFloat((totalWinProfit / winningTrades.length).toFixed(2)) : 0,
-          avg_loss: losingTrades.length > 0 ? parseFloat((totalLossProfit / losingTrades.length).toFixed(2)) : 0
-        },
-        closed_trades: trades
+        sso_token: ssoToken,
+        webtrader_url: webtraderUrl,
+        server: 'VintageLive-Server 1'
       }
     });
   } catch (err) {
-    return res.status(500).json({ message: 'Failed to retrieve trade performance', error: err.message });
+    return res.status(500).json({ ok: false, success: false, message: 'SSO launch failed', error: err.message });
   }
 };
 
-/**
- * 8. Copy Trading / Social Copier Providers & Allocation
- */
-export const getCopyTradingProviders = async (req, res) => {
-  try {
-    const providers = [
-      { id: 1, name: 'Alpha Quant Algorithmic', trader: 'Alexey V.', monthly_roi: '+24.5%', drawdown: '4.2%', win_rate: '78%', copiers: 1420, min_deposit: 500, risk_score: 3 },
-      { id: 2, name: 'Gold & FX Swing Master', trader: 'Elena R.', monthly_roi: '+38.2%', drawdown: '8.7%', win_rate: '71%', copiers: 2890, min_deposit: 1000, risk_score: 5 },
-      { id: 3, name: 'Conservative Yield ECN', trader: 'Michael B.', monthly_roi: '+12.8%', drawdown: '1.9%', win_rate: '85%', copiers: 980, min_deposit: 250, risk_score: 1 }
-    ];
+export const getTradePerformance = async (req, res) => {
+  return res.json({
+    ok: true,
+    success: true,
+    data: {
+      metrics: { total_trades: 0, win_rate_pct: 0, loss_rate_pct: 0, net_profit: 0, profit_factor: 1, total_lots: 0 },
+      closed_trades: []
+    }
+  });
+};
 
-    return res.json({
-      message: 'Copy trading strategy providers fetched',
-      data: { providers }
-    });
-  } catch (err) {
-    return res.status(500).json({ message: 'Copy trading lookup failed', error: err.message });
-  }
+export const getCopyTradingProviders = async (req, res) => {
+  return res.json({
+    ok: true,
+    success: true,
+    data: { providers: [] }
+  });
 };
 
 export const followStrategyProvider = async (req, res) => {
-  const userId = req.user.id;
-  const { provider_id, login, allocation_amount } = req.body;
-
-  try {
-    return res.json({
-      message: `Successfully allocated $${allocation_amount || 500} to Copy Strategy Provider #${provider_id} on Account #${login || 501928}`,
-      data: { provider_id, login, allocation_amount }
-    });
-  } catch (err) {
-    return res.status(500).json({ message: 'Copy allocation failed', error: err.message });
-  }
+  return res.json({
+    ok: true,
+    success: true,
+    data: {}
+  });
 };

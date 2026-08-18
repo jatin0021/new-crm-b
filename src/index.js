@@ -98,6 +98,18 @@ const startServer = async () => {
   // Connect MetaTrader 5 SignalR Bridge Service
   connectMt5Bridge();
 
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.warn(`⚠️ Port ${env.PORT} is currently occupied. Retrying connection in 2 seconds...`);
+      setTimeout(() => {
+        server.close();
+        server.listen(env.PORT);
+      }, 2000);
+    } else {
+      console.error('Server error:', err.message);
+    }
+  });
+
   server.listen(env.PORT, () => {
     console.log(`
 ===================================================================

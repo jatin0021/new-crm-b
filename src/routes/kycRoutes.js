@@ -1,30 +1,47 @@
 import express from 'express';
 import multer from 'multer';
 import path from 'path';
-import { getKycStatus, uploadKycDocuments, getSumsubToken } from '../controllers/kycController.js';
+import { 
+  getKycStatus, 
+  uploadKycDocument, 
+  streamKycDocument,
+  startShuftiSession, 
+  handleShuftiWebhook 
+} from '../controllers/kycController.js';
 import { authenticateJWT } from '../middleware/auth.js';
+
+import fs from 'fs';
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, path.join(process.cwd(), 'uploads/kyc'));
+    const dir = path.join(process.cwd(), 'uploads/kyc');
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, `kyc-${file.fieldname}-${uniqueSuffix}${path.extname(file.originalname)}`);
+    cb(null, `kyc-${uniqueSuffix}${path.extname(file.originalname)}`);
   }
 });
 
-const upload = multer({ storage, limits: { fileSize: 10 * 1024 * 1024 } });
+const upload = multer({ 
+  storage, 
+  limits: { fileSize: 15 * 1024 * 1024 } // Allow image/pdf up to 15MB
+});
 
 const router = express.Router();
 
+// Public webhook callback
+router.post('/shufti/webhook', express.json(), handleShuftiWebhook);
+
+// Authenticated client routes
 router.use(authenticateJWT);
 
 router.get('/status', getKycStatus);
-router.post('/sumsub-token', getSumsubToken);
-router.post('/upload', upload.fields([
-  { name: 'id_document', maxCount: 1 },
-  { name: 'proof_address', maxCount: 1 }
-]), uploadKycDocuments);
+router.post('/upload', upload.any(), uploadKycDocument);
+router.get('/documents/:id', streamKycDocument);
+router.post('/shufti/start', startShuftiSession);
 
 export default router;

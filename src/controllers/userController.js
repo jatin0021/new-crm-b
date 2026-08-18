@@ -79,7 +79,7 @@ export const getProfileDetails = async (req, res) => {
       );
       user = resVal.rows[0];
     } else {
-      user = inMemoryStore.users.find(u => u.id === userId);
+      user = inMemoryStore.users.find(u => String(u.id) === String(userId));
     }
 
     if (!user) {

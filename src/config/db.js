@@ -181,12 +181,33 @@ if (env.DATABASE_URL) {
   });
 }
 
-// Check Database Connection on startup
+// Check Database Connection on startup & run schema migrations
 export const initDb = async () => {
   try {
     const client = await pool.connect();
     isPgConnected = true;
     console.log('PostgreSQL Database Connected Successfully.');
+
+    // Auto-migrate schema columns for existing Postgres databases
+    await client.query(`
+      ALTER TABLE trading_accounts ADD COLUMN IF NOT EXISTS account_number VARCHAR(50);
+      ALTER TABLE trading_accounts ADD COLUMN IF NOT EXISTS platform VARCHAR(20) DEFAULT 'MT5';
+      ALTER TABLE trading_accounts ADD COLUMN IF NOT EXISTS is_demo BOOLEAN DEFAULT FALSE;
+      ALTER TABLE trading_accounts ADD COLUMN IF NOT EXISTS trading_server VARCHAR(100);
+      ALTER TABLE trading_accounts ADD COLUMN IF NOT EXISTS name VARCHAR(255);
+      ALTER TABLE trading_accounts ADD COLUMN IF NOT EXISTS mt5_group TEXT;
+      ALTER TABLE trading_accounts ADD COLUMN IF NOT EXISTS account_status VARCHAR(20) DEFAULT 'active';
+
+      ALTER TABLE kyc_verification ADD COLUMN IF NOT EXISTS document_type VARCHAR(100);
+      ALTER TABLE kyc_verification ADD COLUMN IF NOT EXISTS id_type VARCHAR(100);
+      ALTER TABLE kyc_verification ADD COLUMN IF NOT EXISTS file_path TEXT;
+      ALTER TABLE kyc_verification ADD COLUMN IF NOT EXISTS file_data BYTEA;
+      ALTER TABLE kyc_verification ADD COLUMN IF NOT EXISTS mime_type VARCHAR(100);
+      ALTER TABLE kyc_verification ADD COLUMN IF NOT EXISTS rejection_reason TEXT;
+      ALTER TABLE kyc_verification ADD COLUMN IF NOT EXISTS reviewer_notes TEXT;
+      ALTER TABLE kyc_verification ADD COLUMN IF NOT EXISTS comment TEXT;
+    `);
+
     client.release();
   } catch (err) {
     isPgConnected = false;

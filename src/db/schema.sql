@@ -76,17 +76,30 @@ CREATE TABLE IF NOT EXISTS user_logs (
 CREATE TABLE IF NOT EXISTS trading_accounts (
   id SERIAL PRIMARY KEY,
   user_id INT REFERENCES users(id) ON DELETE CASCADE,
-  login INT UNIQUE NOT NULL,
-  account_type VARCHAR(20) DEFAULT 'live', -- 'live', 'demo'
-  group_type VARCHAR(100) DEFAULT 'Standard ECN',
-  leverage VARCHAR(20) DEFAULT '1:500',
-  master_password VARCHAR(100),
-  investor_password VARCHAR(100),
+  account_number VARCHAR(50) UNIQUE,
+  login INT UNIQUE,
+  platform VARCHAR(20) DEFAULT 'MT5',
+  account_type VARCHAR(255) DEFAULT 'Standard',
+  currency VARCHAR(10) DEFAULT 'USD',
+  is_swap_free BOOLEAN DEFAULT FALSE,
+  is_copy_account BOOLEAN DEFAULT FALSE,
+  leverage VARCHAR(20) DEFAULT '100',
+  reason_for_account TEXT,
+  account_status VARCHAR(20) DEFAULT 'active',
+  is_demo BOOLEAN DEFAULT FALSE,
+  trading_server VARCHAR(100),
+  master_password VARCHAR(255),
+  investor_password VARCHAR(255),
+  name VARCHAR(255),
   balance NUMERIC(15, 2) DEFAULT 0.00,
   equity NUMERIC(15, 2) DEFAULT 0.00,
+  credit NUMERIC(15, 2) DEFAULT 0.00,
   free_margin NUMERIC(15, 2) DEFAULT 0.00,
-  currency VARCHAR(10) DEFAULT 'USD',
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  margin NUMERIC(15, 2) DEFAULT 0.00,
+  mt5_group TEXT,
+  custom_group_id INT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS mt5_trade_history (
@@ -189,24 +202,60 @@ CREATE TABLE IF NOT EXISTS ib_commission_ledger (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- 5. COMPLIANCE DOMAIN
+-- 5. COMPLIANCE DOMAIN (MANUAL & SHUFTI PRO DUAL-VERIFICATION)
 CREATE TABLE IF NOT EXISTS kyc_verification (
   id SERIAL PRIMARY KEY,
-  user_id INT UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-  id_document_url VARCHAR(255),
-  proof_address_url VARCHAR(255),
-  status VARCHAR(30) DEFAULT 'pending',
-  reviewer_notes TEXT,
-  reviewed_at TIMESTAMP WITH TIME ZONE
+  user_id INT REFERENCES users(id) ON DELETE CASCADE,
+  document_type VARCHAR(50) NOT NULL,
+  id_type VARCHAR(50),
+  file_path VARCHAR(255) NOT NULL,
+  file_data BYTEA,
+  mime_type VARCHAR(100),
+  status VARCHAR(20) DEFAULT 'Pending',
+  comment TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS shufti_kyc (
+CREATE TABLE IF NOT EXISTS shufti_verifications (
   id SERIAL PRIMARY KEY,
-  user_id INT REFERENCES users(id),
-  reference_id VARCHAR(100) UNIQUE,
-  event VARCHAR(50),
-  verification_result JSONB,
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+  user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reference VARCHAR(255) NOT NULL UNIQUE,
+  verification_url TEXT,
+  status VARCHAR(64) DEFAULT 'pending',
+  event_name VARCHAR(128),
+  decline_reason TEXT,
+  country VARCHAR(8),
+  email VARCHAR(255),
+  shufti_payload JSONB,
+  verified_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS shufti_proofs (
+  id SERIAL PRIMARY KEY,
+  verification_id INT REFERENCES shufti_verifications(id) ON DELETE CASCADE,
+  user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reference VARCHAR(255) NOT NULL,
+  service VARCHAR(64) NOT NULL,
+  proof_key VARCHAR(128) NOT NULL,
+  mime_type VARCHAR(150) NOT NULL,
+  file_name VARCHAR(255),
+  file_data BYTEA NOT NULL,
+  file_size INT NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (reference, service, proof_key)
+);
+
+CREATE TABLE IF NOT EXISTS shufti_webhook_events (
+  id SERIAL PRIMARY KEY,
+  reference VARCHAR(255) NOT NULL,
+  event_name VARCHAR(128) NOT NULL,
+  event_time VARCHAR(100),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE (reference, event_name, event_time)
 );
 
 -- 6. SALES CRM DOMAIN

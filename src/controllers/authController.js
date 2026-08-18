@@ -256,8 +256,8 @@ export const getProfile = async (req, res) => {
     const walletRes = await query(`SELECT wallet_number, balance, currency FROM wallets WHERE user_id = $1`, [userId]);
     wallet = walletRes.rows[0];
   } else {
-    user = inMemoryStore.users.find(u => u.id === userId);
-    wallet = inMemoryStore.wallets.find(w => w.user_id === userId);
+    user = inMemoryStore.users.find(u => String(u.id) === String(userId));
+    wallet = inMemoryStore.wallets.find(w => String(w.user_id) === String(userId));
   }
 
   if (!user) {
