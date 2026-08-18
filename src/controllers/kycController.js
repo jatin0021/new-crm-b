@@ -5,16 +5,19 @@ import crypto from 'crypto';
  * 1. Get Sumsub WebSDK Access Token Endpoint
  */
 export const getSumsubToken = async (req, res) => {
-  const userId = req.user.id;
-  const userEmail = req.user.email;
+  const userId = req.user?.id;
+  if (!userId) {
+    return res.status(401).json({ ok: false, success: false, message: 'Unauthorized' });
+  }
 
   try {
-    // Generate WebSDK token payload
     const externalUserId = `user_vintage_${userId}`;
     const levelName = 'basic-kyc-level';
     const sumsubAccessToken = `sbx_tok_${crypto.randomBytes(24).toString('hex')}`;
 
     return res.json({
+      ok: true,
+      success: true,
       message: 'Sumsub WebSDK access token generated successfully',
       data: {
         token: sumsubAccessToken,
@@ -24,7 +27,7 @@ export const getSumsubToken = async (req, res) => {
       }
     });
   } catch (err) {
-    return res.status(500).json({ message: 'Failed to generate Sumsub token', error: err.message });
+    return res.status(500).json({ ok: false, success: false, message: 'Failed to generate Sumsub token', error: err.message });
   }
 };
 
@@ -32,7 +35,10 @@ export const getSumsubToken = async (req, res) => {
  * 2. Get Real-Time KYC Status
  */
 export const getKycStatus = async (req, res) => {
-  const userId = req.user.id;
+  const userId = req.user?.id;
+  if (!userId) {
+    return res.status(401).json({ ok: false, success: false, message: 'Unauthorized' });
+  }
 
   try {
     let kyc = null;
@@ -43,9 +49,9 @@ export const getKycStatus = async (req, res) => {
       userKycStatus = userRes.rows[0]?.kyc_status || 'unverified';
 
       const kycRes = await query(`SELECT * FROM kyc_verification WHERE user_id = $1`, [userId]);
-      kyc = kycRes.rows[0];
+      kyc = kycRes.rows[0] || null;
     } else {
-      const user = inMemoryStore.users.find(u => u.id === userId);
+      const user = (inMemoryStore.users || []).find(u => String(u.id) === String(userId));
       userKycStatus = user?.kyc_status || 'unverified';
       kyc = {
         user_id: userId,
@@ -59,54 +65,78 @@ export const getKycStatus = async (req, res) => {
     }
 
     return res.json({
+      ok: true,
+      success: true,
       message: 'KYC status retrieved',
       data: {
         status: userKycStatus,
+        kyc_status: userKycStatus,
         verification_details: kyc
       }
     });
   } catch (err) {
-    return res.status(500).json({ message: 'Failed to retrieve KYC status', error: err.message });
+    return res.status(500).json({ ok: false, success: false, message: 'Failed to retrieve KYC status', error: err.message });
   }
 };
 
 /**
- * 3. Upload & Capture Verification Documents (ID, Passport, POA, OCR & Liveness)
+ * 3. Upload & Capture Verification Documents (ID, Passport, POA, Manual Upload)
  */
 export const uploadKycDocuments = async (req, res) => {
-  const userId = req.user.id;
-  const { document_type, liveness_passed, ocr_data } = req.body;
-  const files = req.files || {};
+  const userId = req.user?.id;
+  if (!userId) {
+    return res.status(401).json({ ok: false, success: false, message: 'Unauthorized user session. Please log in again.' });
+  }
 
-  const idDoc = files.id_document ? files.id_document[0].filename : req.body.id_document_url || 'gov_id_photo.jpg';
-  const proofAddr = files.proof_address ? files.proof_address[0].filename : req.body.proof_address_url || 'proof_address.pdf';
+  const { document_type, documentType, idType } = req.body || {};
+  const files = req.files || [];
+
+  let uploadedFilename = 'kyc_doc.jpg';
+  if (Array.isArray(files) && files.length > 0) {
+    uploadedFilename = files[0].filename;
+  } else if (typeof files === 'object' && files !== null) {
+    const f = files.file?.[0] || files.id_document?.[0] || files.proof_address?.[0];
+    if (f) uploadedFilename = f.filename;
+  }
+
+  const docCategory = documentType || document_type || 'Proof of Identity';
+  const numUserId = parseInt(userId, 10) || userId;
 
   try {
     if (checkPgStatus()) {
-      await query(
-        `INSERT INTO kyc_verification (user_id, id_document_url, proof_address_url, status)
-         VALUES ($1, $2, $3, 'pending')
-         ON CONFLICT (user_id) DO UPDATE SET id_document_url = $2, proof_address_url = $3, status = 'pending'`,
-        [userId, idDoc, proofAddr]
-      );
-      await query(`UPDATE users SET kyc_status = 'pending' WHERE id = $1`, [userId]);
+      const existing = await query(`SELECT id FROM kyc_verification WHERE user_id = $1`, [numUserId]);
+      if (existing.rows && existing.rows.length > 0) {
+        await query(
+          `UPDATE kyc_verification SET id_document_url = $1, proof_address_url = $1, status = 'pending' WHERE user_id = $2`,
+          [uploadedFilename, numUserId]
+        );
+      } else {
+        await query(
+          `INSERT INTO kyc_verification (user_id, id_document_url, proof_address_url, status) VALUES ($1, $2, $2, 'pending')`,
+          [numUserId, uploadedFilename]
+        );
+      }
+      await query(`UPDATE users SET kyc_status = 'pending' WHERE id = $1`, [numUserId]);
     } else {
-      const user = inMemoryStore.users.find(u => u.id === userId);
-      if (user) user.kyc_status = 'pending';
+      if (Array.isArray(inMemoryStore.users)) {
+        const user = inMemoryStore.users.find(u => String(u.id) === String(userId));
+        if (user) user.kyc_status = 'pending';
+      }
     }
 
     return res.status(200).json({
-      message: 'Government ID & Proof of Address submitted successfully. AI OCR text extracted & compliance review in progress.',
+      ok: true,
+      success: true,
+      message: 'Government ID / Proof Document submitted successfully! Compliance review in progress.',
       data: {
+        kyc_status: 'pending',
         status: 'pending',
-        document_type: document_type || 'passport',
-        id_document: idDoc,
-        proof_address: proofAddr,
-        liveness_verified: liveness_passed ?? true,
-        ocr_extracted: ocr_data || { name: 'Verified Match', doc_number: 'A-9810293' }
+        document_type: docCategory,
+        filename: uploadedFilename
       }
     });
   } catch (err) {
-    return res.status(500).json({ message: 'KYC submission failed', error: err.message });
+    console.error('KYC Upload DB Error:', err);
+    return res.status(500).json({ ok: false, success: false, message: `KYC submission error: ${err.message}` });
   }
 };
