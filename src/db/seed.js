@@ -10,6 +10,7 @@ export const seedDatabase = async () => {
   if (checkPgStatus()) {
     try {
       // Ensure Schema Migrations for User Auth & Access Control
+      await query(`ALTER TABLE users DROP COLUMN IF EXISTS phone;`);
       await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified BOOLEAN DEFAULT FALSE;`);
       await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS verification_token VARCHAR(255);`);
       await query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS reset_password_token VARCHAR(255);`);

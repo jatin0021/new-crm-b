@@ -74,7 +74,7 @@ export const getProfileDetails = async (req, res) => {
     let user = null;
     if (checkPgStatus()) {
       const resVal = await query(
-        `SELECT id, first_name, last_name, email, country, phone, referral_code, kyc_status, email_verified, date_of_birth, address, city, state, postal_code, two_factor_enabled FROM users WHERE id = $1`,
+        `SELECT id, first_name, last_name, email, country, referral_code, kyc_status, email_verified, date_of_birth, address, city, state, postal_code, two_factor_enabled FROM users WHERE id = $1`,
         [userId]
       );
       user = resVal.rows[0];
@@ -95,7 +95,6 @@ export const getProfileDetails = async (req, res) => {
           last_name: user.last_name,
           email: user.email,
           country: user.country || 'United States',
-          phone: user.phone || '',
           referral_code: user.referral_code,
           kyc_status: user.kyc_status || 'unverified',
           email_verified: user.email_verified ?? true,
@@ -118,7 +117,7 @@ export const getProfileDetails = async (req, res) => {
  */
 export const updateProfileDetails = async (req, res) => {
   const userId = req.user.id;
-  const { first_name, last_name, phone, country, date_of_birth, address, city, state, postal_code } = req.body;
+  const { first_name, last_name, country, date_of_birth, address, city, state, postal_code } = req.body;
 
   try {
     let updatedUser = null;
@@ -128,17 +127,16 @@ export const updateProfileDetails = async (req, res) => {
         `UPDATE users 
          SET first_name = COALESCE($1, first_name),
              last_name = COALESCE($2, last_name),
-             phone = COALESCE($3, phone),
-             country = COALESCE($4, country),
-             date_of_birth = COALESCE($5, date_of_birth),
-             address = COALESCE($6, address),
-             city = COALESCE($7, city),
-             state = COALESCE($8, state),
-             postal_code = COALESCE($9, postal_code),
+             country = COALESCE($3, country),
+             date_of_birth = COALESCE($4, date_of_birth),
+             address = COALESCE($5, address),
+             city = COALESCE($6, city),
+             state = COALESCE($7, state),
+             postal_code = COALESCE($8, postal_code),
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = $10
-         RETURNING id, first_name, last_name, email, country, phone, referral_code, kyc_status, email_verified, date_of_birth, address, city, state, postal_code, two_factor_enabled`,
-        [first_name, last_name, phone, country, date_of_birth, address, city, state, postal_code, userId]
+         WHERE id = $9
+         RETURNING id, first_name, last_name, email, country, referral_code, kyc_status, email_verified, date_of_birth, address, city, state, postal_code, two_factor_enabled`,
+        [first_name, last_name, country, date_of_birth, address, city, state, postal_code, userId]
       );
       updatedUser = resVal.rows[0];
     } else {
@@ -146,7 +144,6 @@ export const updateProfileDetails = async (req, res) => {
       if (updatedUser) {
         if (first_name !== undefined) updatedUser.first_name = first_name;
         if (last_name !== undefined) updatedUser.last_name = last_name;
-        if (phone !== undefined) updatedUser.phone = phone;
         if (country !== undefined) updatedUser.country = country;
         if (date_of_birth !== undefined) updatedUser.date_of_birth = date_of_birth;
         if (address !== undefined) updatedUser.address = address;

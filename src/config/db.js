@@ -215,6 +215,7 @@ export const initDb = async () => {
     try {
       const schemaPath = path.join(__dirname, '../db/schema.sql');
       if (fs.existsSync(schemaPath)) {
+        await client.query(`ALTER TABLE users DROP COLUMN IF EXISTS phone;`);
         const sql = fs.readFileSync(schemaPath, 'utf8');
         await client.query(sql);
         console.log('✅ PostgreSQL Database Tables Schema Verified.');

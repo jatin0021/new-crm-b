@@ -8,10 +8,9 @@ CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
   first_name VARCHAR(100) NOT NULL,
   last_name VARCHAR(100) NOT NULL,
-  email VARCHAR(255) UNIQUE NOT NULL,
+  email VARCHAR(255) UNIQUE NOT NULL, -- Primary unique identifier for user authentication
   password_hash VARCHAR(255) NOT NULL,
   country VARCHAR(100) DEFAULT 'United States',
-  phone VARCHAR(50),
   referral_code VARCHAR(50),
   kyc_status VARCHAR(30) DEFAULT 'unverified', -- 'unverified', 'pending', 'verified', 'rejected'
   email_verified BOOLEAN DEFAULT FALSE,
@@ -30,6 +29,9 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Fast Index for Lowercase Email Lookup during Login & Registration
+CREATE INDEX IF NOT EXISTS idx_users_lower_email ON users(LOWER(email));
 
 CREATE TABLE IF NOT EXISTS user_sessions (
   id SERIAL PRIMARY KEY,

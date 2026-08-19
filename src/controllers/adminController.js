@@ -80,19 +80,36 @@ export const listAllUsers = async (req, res) => {
 };
 
 export const impersonateUser = async (req, res) => {
-  const { target_user_id } = req.body;
+  let { target_user_id, email, user_id } = req.body || {};
+
+  let target = target_user_id || email || user_id;
+  if (typeof target === 'object' && target !== null) {
+    target = target.id || target.email;
+  }
+
+  if (!target) {
+    return res.status(400).json({ message: 'Target trader ID or email is required for impersonation' });
+  }
 
   try {
     let user = null;
+    const isNumeric = !isNaN(target) && !String(target).includes('@');
+
     if (checkPgStatus()) {
-      const resVal = await query(`SELECT id, first_name, last_name, email, country, phone, referral_code, kyc_status, email_verified FROM users WHERE id = $1`, [target_user_id]);
+      const resVal = isNumeric
+        ? await query(`SELECT id, first_name, last_name, email, country, phone, referral_code, kyc_status, email_verified FROM users WHERE id = $1`, [parseInt(target, 10)])
+        : await query(`SELECT id, first_name, last_name, email, country, phone, referral_code, kyc_status, email_verified FROM users WHERE email = $1`, [String(target).toLowerCase().trim()]);
       user = resVal.rows[0];
     } else {
-      user = inMemoryStore.users.find(u => u.id === parseInt(target_user_id));
+      user = (inMemoryStore.users || []).find(u => 
+        isNumeric 
+          ? String(u.id) === String(target)
+          : String(u.email).toLowerCase() === String(target).toLowerCase()
+      );
     }
 
     if (!user) {
-      return res.status(404).json({ message: 'Target trader not found for impersonation' });
+      return res.status(404).json({ message: `Target trader record not found for: ${target}` });
     }
 
     // Generate short-lived impersonation token with admin reference
@@ -109,6 +126,8 @@ export const impersonateUser = async (req, res) => {
     );
 
     return res.json({
+      ok: true,
+      success: true,
       message: `Impersonation session established for trader: ${user.email}`,
       data: {
         token: impersonationToken,

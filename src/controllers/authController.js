@@ -37,7 +37,7 @@ const verifyTurnstileToken = async (turnstileToken, ip) => {
  * 1. User Registration Handler
  */
 export const registerUser = async (req, res) => {
-  const { first_name, last_name, email, password, country, phone, referral_code, turnstile_token } = req.body;
+  const { first_name, last_name, email, password, country, referral_code, turnstile_token } = req.body;
 
   if (!email || !password || !first_name || !last_name) {
     return res.status(400).json({
@@ -77,10 +77,10 @@ export const registerUser = async (req, res) => {
       }
 
       const result = await query(
-        `INSERT INTO users (first_name, last_name, email, password_hash, country, phone, referral_code, email_verified, verification_token)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, FALSE, $8) 
-         RETURNING id, first_name, last_name, email, country, phone, referral_code, kyc_status, email_verified, is_active, created_at`,
-        [first_name.trim(), last_name.trim(), normalizedEmail, passwordHash, country || 'United States', phone || '', assignedRefCode, verificationToken]
+        `INSERT INTO users (first_name, last_name, email, password_hash, country, referral_code, email_verified, verification_token)
+         VALUES ($1, $2, $3, $4, $5, $6, FALSE, $7) 
+         RETURNING id, first_name, last_name, email, country, referral_code, kyc_status, email_verified, is_active, created_at`,
+        [first_name.trim(), last_name.trim(), normalizedEmail, passwordHash, country || 'United States', assignedRefCode, verificationToken]
       );
       newUser = result.rows[0];
 
@@ -104,7 +104,6 @@ export const registerUser = async (req, res) => {
         email: normalizedEmail,
         password_hash: passwordHash,
         country: country || 'United States',
-        phone: phone || '',
         referral_code: assignedRefCode,
         kyc_status: 'unverified',
         email_verified: false,
@@ -146,7 +145,6 @@ export const registerUser = async (req, res) => {
           last_name: newUser.last_name,
           email: newUser.email,
           country: newUser.country,
-          phone: newUser.phone,
           referral_code: newUser.referral_code,
           kyc_status: newUser.kyc_status,
           email_verified: newUser.email_verified
@@ -162,11 +160,11 @@ export const registerUser = async (req, res) => {
  * 2. User Login Handler
  */
 export const loginUser = async (req, res) => {
-  const { email, phone, identifier, password, turnstile_token } = req.body;
-  const loginInput = (identifier || email || phone || '').trim();
+  const { email, password, turnstile_token } = req.body;
+  const targetEmail = (email || '').trim().toLowerCase();
 
-  if (!loginInput || !password) {
-    return res.status(400).json({ message: 'Email or phone number and password are required' });
+  if (!targetEmail || !password) {
+    return res.status(400).json({ message: 'Email address and password are required' });
   }
 
   // Turnstile Bot Check
@@ -179,38 +177,19 @@ export const loginUser = async (req, res) => {
     let user = null;
 
     if (checkPgStatus()) {
-      if (loginInput.includes('@')) {
-        const result = await query(`SELECT * FROM users WHERE LOWER(email) = $1 AND is_active = TRUE`, [loginInput.toLowerCase()]);
-        user = result.rows[0];
-      } else {
-        const cleanInput = loginInput.replace(/\D/g, '');
-        const result = await query(
-          `SELECT * FROM users WHERE (phone = $1 OR REGEXP_REPLACE(phone, '[^0-9]', '', 'g') = $2) AND is_active = TRUE`,
-          [loginInput, cleanInput]
-        );
-        user = result.rows[0];
-      }
+      const result = await query(`SELECT * FROM users WHERE LOWER(email) = $1 AND is_active = TRUE`, [targetEmail]);
+      user = result.rows[0];
     } else {
-      const isEmail = loginInput.includes('@');
-      user = inMemoryStore.users.find(u => {
-        if (!u.is_active) return false;
-        if (isEmail) {
-          return u.email?.toLowerCase() === loginInput.toLowerCase();
-        } else {
-          const cleanInput = loginInput.replace(/\D/g, '');
-          const cleanUserPhone = (u.phone || '').replace(/\D/g, '');
-          return u.phone === loginInput || (cleanInput && cleanUserPhone && cleanInput === cleanUserPhone);
-        }
-      });
+      user = inMemoryStore.users.find(u => u.is_active && u.email?.toLowerCase() === targetEmail);
     }
 
     if (!user) {
-      return res.status(401).json({ message: 'Invalid credentials or inactive account' });
+      return res.status(401).json({ message: 'Invalid email address or password' });
     }
 
     const isValidPassword = await bcrypt.compare(password, user.password_hash);
     if (!isValidPassword) {
-      return res.status(401).json({ message: 'Invalid email/phone or password' });
+      return res.status(401).json({ message: 'Invalid email address or password' });
     }
 
     const token = jwt.sign(
